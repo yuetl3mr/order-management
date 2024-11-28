@@ -2,11 +2,25 @@ from flask import Flask, render_template, url_for, request, redirect
 from flask_sqlalchemy import SQLAlchemy
 from collections import defaultdict
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask import session, flash
+from functools import wraps
+from flask import redirect, url_for
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///inventory.db'
 db = SQLAlchemy(app)
+app.config['SECRET_KEY'] = 'i_luv_u' 
 
+class User(db.Model):
+    __tablename__ = 'users'
+    user_id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), nullable=False, unique=True)
+    password = db.Column(db.String(150), nullable=False)
+    date_created = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<User {self.username}>'
 
 class Product(db.Model):
 
@@ -42,7 +56,67 @@ class ProductMovement(db.Model):
     def __repr__(self):
         return '<ProductMovement %r>' % self.movement_id
 
+# @app.route('/create-admin-user')
+# def create_admin_user():
+#     existing_admin = User.query.filter_by(username="admin").first()
+#     if existing_admin:
+#         return "Duplicate!"
+#     hashed_password = generate_password_hash("admin", method='sha256')
+#     admin_user = User(username="admin", password=hashed_password)
+
+#     try:
+#         db.session.add(admin_user)
+#         db.session.commit()
+#         return "Success!"
+#     except:
+#         return "Error"
+
+# Middleware
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def logout_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' in session:
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/login', methods=["POST", "GET"])
+@logout_required
+def login():
+    if request.method == "POST":
+        username = request.form['username']
+        password = request.form['password']
+
+        user = User.query.filter_by(username=username).first()
+
+        if user and check_password_hash(user.password, password):  
+            session['user_id'] = user.user_id
+            session['username'] = user.username
+            return redirect("/")
+        else:
+            flash("User or password error", "danger")
+            return redirect("/login")
+    
+    return render_template("login.html")
+
+@app.route('/logout')
+@login_required
+def logout():
+    session.pop('user_id', None)
+    session.pop('username', None)
+    flash("Success!", "info")
+    return redirect("/login")
+
 @app.route('/', methods=["POST", "GET"])
+@login_required
 def index():
         
     if (request.method == "POST") and ('product_name' in request.form):
@@ -74,6 +148,7 @@ def index():
         return render_template("index.html", products = products, locations = locations)
 
 @app.route('/locations/', methods=["POST", "GET"])
+@login_required
 def viewLocation():
     if (request.method == "POST") and ('location_name' in request.form):
         location_name = request.form["location_name"]
@@ -92,6 +167,7 @@ def viewLocation():
         return render_template("locations.html", locations=locations)
 
 @app.route('/products/', methods=["POST", "GET"])
+@login_required
 def viewProduct():
     if (request.method == "POST") and ('product_name' in request.form):
         product_name = request.form["product_name"]
@@ -110,6 +186,7 @@ def viewProduct():
         return render_template("products.html", products=products)
 
 @app.route("/update-product/<name>", methods=["POST", "GET"])
+@login_required
 def updateProduct(name):
     product = Product.query.get_or_404(name)
     old_porduct = product.product_id
@@ -128,6 +205,7 @@ def updateProduct(name):
         return render_template("update-product.html", product=product)
 
 @app.route("/delete-product/<name>")
+@login_required
 def deleteProduct(name):
     product_to_delete = Product.query.get_or_404(name)
 
@@ -139,6 +217,7 @@ def deleteProduct(name):
         return "There was an issue while deleteing the Product"
 
 @app.route("/update-location/<name>", methods=["POST", "GET"])
+@login_required
 def updateLocation(name):
     location = Location.query.get_or_404(name)
     old_location = location.location_id
@@ -158,6 +237,7 @@ def updateLocation(name):
         return render_template("update-location.html", location=location)
 
 @app.route("/delete-location/<name>")
+@login_required
 def deleteLocation(id):
     location_to_delete = Location.query.get_or_404(id)
 
@@ -169,6 +249,7 @@ def deleteLocation(id):
         return "There was an issue while deleteing the Location"
 
 @app.route("/movements/", methods=["POST", "GET"])
+@login_required
 def viewMovements():
     if request.method == "POST" :
         product_id      = request.form["productId"]
@@ -204,6 +285,7 @@ def viewMovements():
         return render_template("movements.html", movements=movs, products=products, locations=locations)
 
 @app.route("/update-movement/<int:id>", methods=["POST", "GET"])
+@login_required
 def updateMovement(id):
 
     movement    = ProductMovement.query.get_or_404(id)
@@ -226,6 +308,7 @@ def updateMovement(id):
         return render_template("update-movement.html", movement=movement, locations=locations, products=products)
 
 @app.route("/delete-movement/<int:id>")
+@login_required
 def deleteMovement(id):
     movement_to_delete = ProductMovement.query.get_or_404(id)
 
@@ -237,6 +320,7 @@ def deleteMovement(id):
         return "There was an issue while deleteing the Prodcut Movement"
 
 @app.route("/product-balance/", methods=["POST", "GET"])
+@login_required
 def productBalanceReport():
     movs = ProductMovement.query.\
         join(Product, ProductMovement.product_id == Product.product_id).\
@@ -274,6 +358,7 @@ def productBalanceReport():
     return render_template("product-balance.html", movements=balancedDict)
 
 @app.route("/movements/get-from-locations/", methods=["POST"])
+@login_required
 def getLocations():
     product = request.form["productId"]
     location = request.form["location"]
@@ -294,6 +379,7 @@ def getLocations():
 
 
 @app.route("/dub-locations/", methods=["POST", "GET"])
+@login_required
 def getDublicate():
     location = request.form["location"]
     locations = Location.query.\
@@ -306,6 +392,7 @@ def getDublicate():
         return {"output": True}
 
 @app.route("/dub-products/", methods=["POST", "GET"])
+@login_required
 def getPDublicate():
     product_name = request.form["product_name"]
     products = Product.query.\
@@ -333,6 +420,7 @@ def updateProductInMovements(oldProduct, newProduct):
         mov.product_id = newProduct
     
     db.session.commit()
+    
 
 if (__name__ == "__main__"):
     app.run(debug=True)
