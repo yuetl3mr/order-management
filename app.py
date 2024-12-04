@@ -403,6 +403,59 @@ def getPDublicate():
         return {"output": False}
     else:
         return {"output": True}
+    
+@app.route("/statistics/", methods=["GET"])
+@login_required
+def statistics():
+    # Product counts 
+    product_counts = db.session.query(
+        Product.product_id,
+        db.func.count(ProductMovement.movement_id).label("movement_count")
+    ).outerjoin(ProductMovement, Product.product_id == ProductMovement.product_id)\
+    .group_by(Product.product_id).all()
+
+    # Total quantity of products per ID
+    product_quantities = db.session.query(
+        Product.product_id,
+        db.func.sum(ProductMovement.qty).label("total_qty")
+    ).outerjoin(ProductMovement, Product.product_id == ProductMovement.product_id)\
+    .group_by(Product.product_id).all()
+
+    # Location balances
+    location_balances = db.session.query(
+        Location.location_id,
+        db.func.sum(db.case([(ProductMovement.to_location != None, ProductMovement.qty)], else_=0)).label("incoming"),
+        db.func.sum(db.case([(ProductMovement.from_location != None, -ProductMovement.qty)], else_=0)).label("outgoing")
+    ).outerjoin(ProductMovement, Location.location_id.in_([ProductMovement.from_location, ProductMovement.to_location]))\
+    .group_by(Location.location_id).all()
+
+    # Prepare chart data for Product Statistics
+    product_chart_data = {
+        "labels": [p[0] for p in product_counts],
+        "data": [p[1] for p in product_counts],
+    }
+
+    # Total Quantity per Product ID
+    movement_chart_data = {
+        "labels": [p[0] for p in product_quantities],
+        "data": [p[1] for p in product_quantities],
+    }
+
+    # Location Chart Data (incoming, outgoing, balance)
+    location_chart_data = {
+        "labels": [loc[0] for loc in location_balances],
+        "incoming": [loc[1] or 0 for loc in location_balances],
+        "outgoing": [loc[2] or 0 for loc in location_balances],
+        "balance": [(loc[1] or 0) + (loc[2] or 0) for loc in location_balances],
+    }
+
+    return render_template(
+        "statistics.html",
+        product_chart_data=product_chart_data,
+        movement_chart_data=movement_chart_data,
+        location_chart_data=location_chart_data
+    )
+
 
 def updateLocationInMovements(oldLocation, newLocation):
     movement = ProductMovement.query.filter(ProductMovement.from_location == oldLocation).all()
